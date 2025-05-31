@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/sha3"
 	"math"
 	"sort"
@@ -12,16 +13,18 @@ import (
 const (
 	SHA3 int = 1 + iota
 	SHA256
+	KECCAK256
 )
 
 type Option struct {
-	Sort       bool
-	SortLeaves bool
-	SortPairs  bool
+	Sort              bool
+	SortLeaves        bool
+	SortPairs         bool
+	DisableLeavesHash bool
 }
 
 type Content struct {
-	X string
+	X []byte
 }
 
 type Leaves [][]byte
@@ -32,13 +35,14 @@ type Proof struct {
 }
 
 type MerkleTree struct {
-	sort          bool
-	sortPairs     bool
-	sortLeaves    bool
-	IsBitcoinTree bool
-	Layers        []Leaves
-	Leaves        Leaves
-	hashFn        int
+	sort              bool
+	sortPairs         bool
+	sortLeaves        bool
+	IsBitcoinTree     bool
+	Layers            []Leaves
+	Leaves            Leaves
+	hashFn            int
+	DisableLeavesHash bool
 }
 
 func New(defaultHash int) *MerkleTree {
@@ -55,6 +59,9 @@ func (t *MerkleTree) WithOption(option Option) {
 		t.sort = option.Sort
 		t.sortPairs = true
 		t.sortLeaves = true
+	}
+	if option.DisableLeavesHash {
+		t.DisableLeavesHash = option.DisableLeavesHash
 	}
 
 	if option.SortPairs {
@@ -92,7 +99,13 @@ func (t *MerkleTree) calculateHash(data interface{}) ([]byte, error) {
 			}
 			return h.Sum(nil), nil
 		}
-
+	case KECCAK256:
+		switch v := data.(type) {
+		case string:
+			return crypto.Keccak256Hash([]byte(v)).Bytes(), nil
+		case []byte:
+			return crypto.Keccak256Hash(v).Bytes(), nil
+		}
 	}
 
 	return nil, nil
@@ -101,7 +114,10 @@ func (t *MerkleTree) calculateHash(data interface{}) ([]byte, error) {
 
 func (t *MerkleTree) InitLeaves(leaves []Content) {
 	for _, l := range leaves {
-		hashByte, _ := t.calculateHash(l.X)
+		hashByte := l.X
+		if !t.DisableLeavesHash {
+			hashByte, _ = t.calculateHash(l.X)
+		}
 		t.Leaves = append(t.Leaves, hashByte)
 	}
 	_ = t.createLayers()
@@ -235,7 +251,10 @@ func (t *MerkleTree) GetHexRoot() string {
 }
 
 func (t *MerkleTree) GetProof(leafStr Content, index ...int) []*Proof {
-	leaf, _ := t.calculateHash(leafStr.X)
+	leaf := leafStr.X
+	if !t.DisableLeavesHash {
+		leaf, _ = t.calculateHash(leafStr.X)
+	}
 	var idx int
 	var proofs []*Proof
 	if len(index) == 0 {
